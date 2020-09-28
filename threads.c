@@ -1,58 +1,58 @@
 //Devin Bidstrup Fall 2020
 //Give the library definitions
 #include <pthread.h>
+#include <ec440threads.h>
+
+#define MAX_THREADS 128     //Max number of threads which can exist
+
+//Define different thread status'
+enum threadState
+{
+    THREAD_RUNNING,         /*Running thread*/
+    THREAD_READY,           /*Not running but ready to run*/
+    THREAD_BLOCKED          /*Waiting for i/o*/
+};
 
 //Put thread control block here
-
-//Put signal handler here
-
-//Pointer mangle function used for writing pc and rsp before writing to jump buffer
-unsigned long int ptr_mangle(unsigned long int p)
+struct threadControlBlock
 {
-    unsigned long int ret;
-    asm("movq %1, %%rax;\n"
-        "xorq %%fs:0x30, %%rax;"
-        "rolq $0x11, %%rax;"
-        "movq %%rax, %0;"
-    : "=r"(ret)
-    : "r"(p)
-    : "%rax"
-    );    
-    return ret;
+    pthread_t tid;                      //Thread ID
+    enum threadState status;            //Thread status
+                                        //threads state(Set of registers)
+                                        //Program Counter
+    void* stackArea;                    //Pointer to threads stack area
+    pid_t* ppid;                        //Pointer to process that created this thread
+};
+
+//Function to initialize the thread subsytem after the first call to pthread_create
+void initializeThreadSS()
+{
+    //Put signal handler here (maybe) for alarm (RR scheduling)
+
+
+    //Dynamically allocate the threadControlBlock array
+    struct threadControlBlock* tcb[MAX_THREADS];
+    for (int i = 0; i < MAX_THREADS; i++)
+    {
+        tcb[i] = (struct threadControlBlock*) malloc(sizeof(struct threadControlBlock));
+    }
 }
 
-//Pointer demangle to remove the effects of the mangle function
-unsigned long int ptr_demangle(unsigned long int p) 
-{    
-    unsigned long int ret;
-    asm("movq %1, %%rax;\n"
-        "rorq $0x11, %%rax;"
-        "xorq %%fs:0x30, %%rax;"
-        "movq %%rax, %0;"    
-    : "=r"(ret)    
-    : "r"(p)
-    : "%rax"    
-    );    
-    return ret;
-}
-
-//start_thunk function used to send value of R13 to the first arguement of the function stored in R12
-void *start_thunk() 
-{  
-    asm("popq %%rbp;\n"           //clean up the function prolog      
-        "movq %%r13, %%rdi;\n"    //put arg in $rdi      
-        "pushq %%r12;\n"          //push &start_routine      
-        "retq;\n"                 //return to &start_routine      
-        :      
-        :      
-        : "%rdi"  
-    );  
-    __builtin_unreachable();
-}
-
+//pthread_create function
 extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr, 
                           void *(*start_routine) (void *), void *arg)
 {
+    intializeThreadSS();
+
+    //Allocate a new stack of 32,767 byte size
+    void* stackPointer;;
+    stackPointer = malloc(32767);
+
+    //Initialize the threads state with start_routine
+        //use setjmp to save the state of the current thread in jmp_buf
+        //change the program counter(RIP) to point to the start_thunk function
+        //set RSP(stack pointer) to the top of our newly allocated stack
+
     return 0;
 }
 
