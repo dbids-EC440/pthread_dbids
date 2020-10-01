@@ -37,33 +37,33 @@
 /*END COPY FROM THREADS MAN PAGE*/
 
 //PrintHello sourced from: https://computing.llnl.gov/tutorials/pthreads/#CreatingThreads
-/*void *PrintHello(void *threadid)
+void *PrintHello(void *threadid)
 {
    long tid;
    tid = (long)threadid;
    printf("Hello World! It's me, thread #%ld!\n", tid);
-   //pthread_exit(NULL);
-}*/
+   pthread_exit(NULL);
+}
 
 int main(int argc, char *argv[])
 {
-    /*pthread_t threads[NUM_THREADS];
+    pthread_t threads[NUM_THREADS];
     int returnVal = 0;
     long t;
     for (t = 0; t < NUM_THREADS; t++)
     {
         printf("In main: creating thread %ld\n", t);
-        //returnVal = pthread_create(&threads[t], NULL, PrintHello, (void *)t);
+        returnVal = pthread_create(&threads[t], NULL, PrintHello, (void *)t);
         if (returnVal)
         {
-            printf("ERROR; return code from pthread_create() is %d\n", rc);
+            printf("ERROR; return code from pthread_create() is %d\n", returnVal);
             exit(EXIT_FAILURE);
         }
     }
-    */
+    
    /* Last thing that main() should do */
-   //exit(EXIT_FAILURE);
-   //pthread_exit(NULL);
+   exit(EXIT_SUCCESS);
+   pthread_exit(NULL);
 
    return 0;
 }
