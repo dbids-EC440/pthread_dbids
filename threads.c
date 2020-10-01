@@ -42,7 +42,7 @@ struct threadControlBlock
 };
 
 //Define select global vars
-struct threadControlBlock* tcb[MAX_THREADS];
+struct threadControlBlock tcb[MAX_THREADS];
 pthread_t gCurrent;
 struct sigaction act;
 
@@ -59,12 +59,11 @@ void scheduleHandler()
 //Function to initialize the thread subsytem after the first call to pthread_create
 void initializeThreadSS()
 {
-    //Dynamically allocate the threadControlBlock array
+    //Initialize all of the threads to be dead
     for (int i = 0; i < MAX_THREADS; i++)
     {
-        //tcb[i] = (struct threadControlBlock*) malloc(sizeof(struct threadControlBlock));
-        tcb[i]->tid = -1;           //tid of -1 indicates an empty index of array
-        tcb[i]->status = THREAD_DEAD;
+        tcb[i].tid = 0;
+        tcb[i].status = THREAD_DEAD; 
     }
 
     //Setup the ualarm function
@@ -73,7 +72,7 @@ void initializeThreadSS()
     ualarm(usecs, interval);
 
     //Set current thread id to gCurrent
-    gCurrent = 0;
+    gCurrent = 1;
 
     //signal handler for alarm (RR scheduling)
     sigemptyset(&act.sa_mask);
@@ -95,13 +94,14 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 
     /*...Create thread context...*/
     //Find the first open thread ID and store that in currTid
-    pthread_t currTid = 0;
-    while(tcb[currTid]->tid != -1 && currTid < 128)
+    //Note that I chose the thread id's to be 1-127, with 0 as the main thread
+    pthread_t currTid = 1;
+    while(tcb[currTid].status != THREAD_DEAD && currTid < 128)
     {
         currTid++;
     }
-    tcb[currTid]->tid = currTid;  //Storing the index shows that it is no longer empty
-    *thread = currTid;            //Stores the thread id in the pointer so that it is know to main
+    tcb[currTid].tid = currTid;  //Storing the index shows that it is no longer empty
+    *thread = currTid;           //Stores the thread id in the pointer so that it is known to main
 
     //Allocate a new stack of 32,767 byte size
     void (*stackPointer)(void*);
@@ -109,36 +109,34 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 
     //Initialize the threads state with start_routine
     //use setjmp to save the state of the current thread in jmp_buf
-    setjmp(tcb[currTid]->envBuffer);
+    setjmp(tcb[currTid].envBuffer);
 
     //Change the program counter(RIP) to point to the start_thunk function
-    tcb[currTid]->envBuffer[0].__jmpbuf[JB_PC] = ptr_mangle((unsigned long int)start_thunk); 
+    tcb[currTid].envBuffer[0].__jmpbuf[JB_PC] = ptr_mangle((unsigned long int)start_thunk); 
     
     //set RSP(stack pointer) to the top of our newly allocated stack
-    tcb[currTid]->envBuffer[0].__jmpbuf[JB_RSP] = ptr_mangle((unsigned long int)stackPointer);  
+    tcb[currTid].envBuffer[0].__jmpbuf[JB_RSP] = ptr_mangle((unsigned long int)stackPointer);  
     
     //Change R13(index 3 of jmp_buf) to contain value of void* arg
-    tcb[currTid]->envBuffer[0].__jmpbuf[JB_R13] = (long) arg;
+    tcb[currTid].envBuffer[0].__jmpbuf[JB_R13] = (long) arg; //wrong
     
     //Change R12(index 2 of jmp_buf) to contain address of start_routine function
-    tcb[currTid]->envBuffer[0].__jmpbuf[JB_R12] = (unsigned long int) &start_routine;
-    
-    //start_thunk should be used to create fake context
-    start_thunk();
+    tcb[currTid].envBuffer[0].__jmpbuf[JB_R12] = (unsigned long int) &start_routine;
 
     //Place address of pthread_exit() at the top of the stack and move RSP
     stackPointer = &pthread_exit;
     stackPointer -= sizeof(&pthread_exit);
-    tcb[currTid]->envBuffer[0].__jmpbuf[JB_RSP] = ptr_mangle((unsigned long int)stackPointer);
+    tcb[currTid].envBuffer[0].__jmpbuf[JB_RSP] = ptr_mangle((unsigned long int)stackPointer);
 
-    //If first Process set status to THREAD_RUNNING, otherwise set to THEAD_READY
-    tcb[currTid]->status = (firstTime) ? THREAD_RUNNING : THREAD_READY;
+    //Set status to THREAD_RUNNING
+    tcb[currTid].status = THREAD_READY;
 
-    //Set first time to false if true
-    if (firstTime) firstTime = 0;
-
-    //Execute start routine and check for return
-    start_routine(arg);
+    //If first time, set to false and schedule
+    if(firstTime)
+    {
+        firstTime = 0;
+        scheduleHandler();
+    }
 
     return 0;
 }
