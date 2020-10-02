@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <unistd.h>
+#include <string.h>
 
 #include "ec440threads.h"
 #include "threads.h"
@@ -49,11 +50,35 @@ struct sigaction act;
 //Handler function to schedule processes in a round robin fashion
 void scheduleHandler()
 {
-    //Find the currently executing thread by searching for THEAD_RUNNING status
-    
     //setjmp is called to store the currently executing threads information
+    setjmp(tcb[gCurrent].envBuffer);
 
+    //Set current thread to READY and find next thread with Ready status
+    tcb[gCurrent].status = THREAD_READY;
+    //int noReadyThreads = 0;
+    int foundThread = 0;
+    while(!foundThread)
+    {
+        //Loop through all possible gCurrent values
+        if(gCurrent == MAX_THREADS - 1)
+        {
+            gCurrent = 0;
+        }
+        else
+        {
+            gCurrent++;
+        }
+        
+        //printf("thread[%d] status: %d\n", (int)gCurrent, tcb[gCurrent].status);
+        //If a thread is ready, exit the loop
+        if(tcb[gCurrent].status == THREAD_READY)
+        {
+            foundThread = 1;
+        }
+    }
+    
     //longjmp is used to restore the next thread and resume execution of that thread
+    longjmp(tcb[gCurrent].envBuffer, 1);
 }
 
 //Function to initialize the thread subsytem after the first call to pthread_create
@@ -104,7 +129,7 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     *thread = currTid;           //Stores the thread id in the pointer so that it is known to main
 
     //Allocate a new stack of 32,767 byte size
-    void (*stackPointer)(void*);
+    void *stackPointer;
     stackPointer = malloc(32767);
 
     //Initialize the threads state with start_routine
@@ -124,8 +149,9 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     tcb[currTid].envBuffer[0].__jmpbuf[JB_R12] = (unsigned long int) &start_routine;
 
     //Place address of pthread_exit() at the top of the stack and move RSP
-    stackPointer = &pthread_exit;
-    stackPointer -= sizeof(&pthread_exit);
+    //*stackPointer = &pthread_exit;
+    stackPointer = memcpy(stackPointer, pthread_exit, sizeof(pthread_exit));
+    stackPointer += sizeof(pthread_exit);
     tcb[currTid].envBuffer[0].__jmpbuf[JB_RSP] = ptr_mangle((unsigned long int)stackPointer);
 
     //Set status to THREAD_RUNNING
