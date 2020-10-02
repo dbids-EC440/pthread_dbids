@@ -50,7 +50,7 @@ int main(int argc, char *argv[])
     pthread_t threads[NUM_THREADS];
     int returnVal = 0;
     long t;
-    for (t = 0; t < NUM_THREADS; t++)
+    for (t = 1; t < NUM_THREADS; t++)
     {
         printf("In main: creating thread %ld\n", t);
         returnVal = pthread_create(&threads[t], NULL, PrintHello, (void *)t);
