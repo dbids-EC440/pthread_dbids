@@ -82,12 +82,12 @@ void scheduleHandler()
         {
             currTid++;
         }
-        //printf("currTid: %d | ", (int)currTid);
+        printf("currTid: %d | ", (int)currTid);
         //If a thread is ready, exit the loop
         if(tcb[currTid].status == THREAD_READY)
         {
             foundThread = 1;
-            //printf("\ncurrTid thread[%d] status: %d\n", (int)currTid, tcb[currTid].status);
+            printf("\ncurrTid thread[%d] status: %d\n", (int)currTid, tcb[currTid].status);
         }
     }
 
@@ -177,10 +177,6 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         
         //Store the thread id in the *thread pointer so that it is known to main
         *thread = currTid;
-        
-        //Allocate a new stack of 32,767 byte size
-        void *stackPointer = malloc(32767);
-        stackPointer += (32767 / sizeof(void *));
 
         //Initialize the threads state with start_routine
         //use setjmp to save the state of the current thread in jmp_buf
@@ -191,17 +187,21 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         tcb[currTid].envBuffer[0].__jmpbuf[JB_PC] = ptr_mangle((unsigned long int)start_thunk); 
         
         //set RSP(stack pointer) to the top of our newly allocated stack
-        tcb[currTid].envBuffer[0].__jmpbuf[JB_RSP] = ptr_mangle((unsigned long int)stackPointer);  
+        //tcb[currTid].envBuffer[0].__jmpbuf[JB_RSP] = ptr_mangle((unsigned long int)stackPointer);  
         
         //Change R13(index 3 of jmp_buf) to contain value of void* arg
         tcb[currTid].envBuffer[0].__jmpbuf[JB_R13] = (long) arg;
         
         //Change R12(index 2 of jmp_buf) to contain address of start_routine function
         tcb[currTid].envBuffer[0].__jmpbuf[JB_R12] = (unsigned long int) start_routine;
-
+        
+        //Allocate a new stack of 32,767 byte size
+        void *stackPointer = malloc(32767);
+        stackPointer += (32767);
         //Place address of pthread_exit() at the top of the stack and move RSP
-        stackPointer = memcpy(stackPointer, pthread_exit, sizeof(pthread_exit));
-        stackPointer -= sizeof(pthread_exit);
+        stackPointer -= sizeof(&pthread_exit);
+        int addressSize = sizeof(&pthread_exit);
+        stackPointer = memcpy(stackPointer, pthread_exit, addressSize);
         tcb[currTid].envBuffer[0].__jmpbuf[JB_RSP] = ptr_mangle((unsigned long int)stackPointer);
 
         //Set status to THREAD_RUNNING
