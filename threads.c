@@ -110,7 +110,7 @@ void scheduleHandler()
 }
 
 //Function to initialize the thread subsytem after the first call to pthread_create
-void initializeThreadSS()
+void initializeThreads()
 {
     //Initialize all of the threads to be dead
     for (int i = 0; i < MAX_THREADS; i++)
@@ -142,7 +142,7 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     //should run only for the first call to pthread_create
     if (firstTime)
     {
-        initializeThreadSS();
+        initializeThreads();
         firstTime = 0;
 
         //Saves the main threads context and checks to see if it's the main thread
@@ -177,7 +177,7 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         //Change R12(index 2 of jmp_buf) to contain address of start_routine function
         tcb[currTid].envBuffer[0].__jmpbuf[JB_R12] = (unsigned long int) start_routine;
         
-        //Allocate a new stack of 32,767 byte size
+        //Allocate a new stack of 32,767 byte size and move pointer to the top of the stack
         void *stackPointer = malloc(32767);
         stackPointer += (32767);
 
