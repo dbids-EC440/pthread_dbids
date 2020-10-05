@@ -1,4 +1,5 @@
-//Devin Bidstrup Fall 2020q
+/*Devin Bidstrup EC440 HW2 Fall 2020*/
+
 //Give the library definitions
 #include <pthread.h>
 #include <setjmp.h>
@@ -14,7 +15,7 @@
 #define MAX_THREADS 128     //Max number of threads which can exist
 #define RR_INTERVAL 50000   //Number of seconds to wait between SIGALRM signals (50ms)
 
-//jmp_buf index definition
+//jmp_buf index definitions
 #define JB_RBX 0
 #define JB_RBP 1
 #define JB_R12 2
@@ -33,7 +34,7 @@ enum threadStatus
     THREAD_DEAD,            /*Thread either not initialized or finished*/    
 };
 
-//Put thread control block here
+//TCB which holds information for a given thread
 struct threadControlBlock
 {
     enum threadStatus status;           /*Thread status*/
@@ -42,16 +43,15 @@ struct threadControlBlock
     int justCreated;                    /*bool used to determine if the thread was just created*/
 };
 
-//Define select global vars
-struct threadControlBlock tcb[MAX_THREADS];
-pthread_t globalTid = 0;
-struct sigaction act;
-int isMainThread = 0;
+//Define select global variables
+struct threadControlBlock tcb[MAX_THREADS];         /*Holds information for all of the threads*/
+pthread_t globalTid = 0;                            /*Stores currently running threads tid*/
+struct sigaction act;                               /*Used to setup SIGALRM */
 
 //Handler function to schedule processes in a round robin fashion
 void scheduleHandler()
 {        
-    //Set current thread to READY and find next thread with Ready status
+    //Set currently running thread to READY
     switch(tcb[globalTid].status)
     {
         case THREAD_RUNNING:
@@ -63,11 +63,12 @@ void scheduleHandler()
             break;
     }
 
+    //Loop through threads to find the next thread to schedule
     int foundThread = 0;
     pthread_t currTid = globalTid;
     while(!foundThread)
     {
-        //Loop through all possible gCurrent values
+        //Check if at the end of the loop, otherwise increment
         if(currTid == MAX_THREADS - 1)
         {
             currTid = 0;
@@ -84,9 +85,10 @@ void scheduleHandler()
         }
     }
 
-    //jumpLoop var prevents infinite looping between setjmp and longjmp, 0 = normal return, nonzero = longjmp return 
-    int jumpLoop = 0;
-
+    int jumpLoop = 0;   /*jumpLoop var prevents infinite looping between setjmp and longjmp, 
+                            0 = normal return, nonzero = longjmp return */
+    
+    //If the thread was not justCreated and is alive, then save the state
     if (tcb[globalTid].justCreated == 0  && tcb[globalTid].status != THREAD_DEAD)
     {
         jumpLoop = setjmp(tcb[globalTid].envBuffer);
@@ -120,23 +122,21 @@ void initializeThreadSS()
     useconds_t usecs = RR_INTERVAL;
     useconds_t interval = RR_INTERVAL;
     ualarm(usecs, interval);
-    
-    //gettimeofday(&tval_before, NULL);
 
-    //signal handler for alarm (RR scheduling)
+    //signal handler for alarm (Round Robin scheduling)
     sigemptyset(&act.sa_mask);
     act.sa_handler = &scheduleHandler;
     act.sa_flags = SA_NODEFER;
     sigaction(SIGALRM, &act, NULL);
 }
 
-//Setup the calling thread
+//Setup the calling thread from main
 extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr, 
                           void *(*start_routine) (void *), void *arg)
 {
 
     static int firstTime = 1;               /*Define bool for the firstTime*/
-    
+    int isMainThread = 0;                   /*Used to stop prevent thread context creation for the main thread*/
     attr = NULL;                            /*Specifically define attr as NULL*/
 
     //should run only for the first call to pthread_create
@@ -151,7 +151,7 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         isMainThread = setjmp(tcb[0].envBuffer);
     }
 
-    /*...Create thread context...*/
+    /*...Create new thread context...*/
     if (!isMainThread)
     {
         //Find the first open thread ID and store that in currTid
@@ -165,15 +165,11 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         //Store the thread id in the *thread pointer so that it is known to main
         *thread = currTid;
 
-        //Initialize the threads state with start_routine
         //use setjmp to save the state of the current thread in jmp_buf
         setjmp(tcb[currTid].envBuffer);
 
         //Change the program counter(RIP) to point to the start_thunk function
         tcb[currTid].envBuffer[0].__jmpbuf[JB_PC] = ptr_mangle((unsigned long int)start_thunk); 
-        
-        //set RSP(stack pointer) to the top of our newly allocated stack
-        //tcb[currTid].envBuffer[0].__jmpbuf[JB_RSP] = ptr_mangle((unsigned long int)stackPointer);  
         
         //Change R13(index 3 of jmp_buf) to contain value of void* arg
         tcb[currTid].envBuffer[0].__jmpbuf[JB_R13] = (long) arg;
@@ -184,23 +180,28 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         //Allocate a new stack of 32,767 byte size
         void *stackPointer = malloc(32767);
         stackPointer += (32767);
+
         //Place address of pthread_exit() at the top of the stack and move RSP
         stackPointer -= sizeof(&pthread_exit);
         void (*tempAddress)(void*) = &pthread_exit;
         int addressSize = sizeof(&pthread_exit);
         stackPointer = memcpy(stackPointer, &tempAddress, addressSize);
+
+        //set RSP(stack pointer) to the top of our newly allocated stack
         tcb[currTid].envBuffer[0].__jmpbuf[JB_RSP] = ptr_mangle((unsigned long int)stackPointer);
 
-        //Set status to THREAD_RUNNING
+        //Set status to THREAD_READY
         tcb[currTid].status = THREAD_READY;
         
-        //Set just created to 1 for scheduleHandler
+        //Set just created to 1 for scheduleHandler to skip setjmp
         tcb[currTid].justCreated = 1;
 
+        //I chose to call scheduleHandler explictly
         scheduleHandler();
     }
     else
     {   
+        //If it isMainThread then it should set the bool to zero and return back to main
         isMainThread = 0;
     }
     
@@ -210,6 +211,7 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 //Terminate the calling thread
 extern void pthread_exit(void *value_ptr)
 {
+    //Set threads status to dead
     tcb[globalTid].status = THREAD_DEAD;
 
     //Check to see if there are any threads still waiting to finish
