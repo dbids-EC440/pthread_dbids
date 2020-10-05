@@ -7,7 +7,6 @@
 #include <signal.h>
 #include <unistd.h>
 #include <string.h>
-#include <sys/time.h>
 
 #include "ec440threads.h"
 #include "threads.h"
@@ -48,15 +47,10 @@ struct threadControlBlock tcb[MAX_THREADS];
 pthread_t globalTid = 0;
 struct sigaction act;
 int isMainThread = 0;
-//struct timeval tval_before, tval_after, tval_result;
 
 //Handler function to schedule processes in a round robin fashion
 void scheduleHandler()
-{
-    //gettimeofday(&tval_after, NULL);
-    //timersub(&tval_after, &tval_before, &tval_result);
-    //printf("Time elapsed: %ld.%06ld\n", (long int)tval_result.tv_sec, (long int)tval_result.tv_usec);
-        
+{        
     //Set current thread to READY and find next thread with Ready status
     switch(tcb[globalTid].status)
     {
@@ -82,12 +76,11 @@ void scheduleHandler()
         {
             currTid++;
         }
-        printf("currTid: %d | ", (int)currTid);
+        
         //If a thread is ready, exit the loop
         if(tcb[currTid].status == THREAD_READY)
         {
             foundThread = 1;
-            printf("\ncurrTid thread[%d] status: %d\n", (int)currTid, tcb[currTid].status);
         }
     }
 
@@ -96,16 +89,13 @@ void scheduleHandler()
 
     if (tcb[globalTid].justCreated == 0  && tcb[globalTid].status != THREAD_DEAD)
     {
-        //printf("globalTid before setjmp: %d\n", (int)globalTid);
         jumpLoop = setjmp(tcb[globalTid].envBuffer);
-        //printf("globalTid after setjmp: %d\n", (int)globalTid);
     }
     
     //Needed to remove setjmp from happening the first time
     if (tcb[currTid].justCreated)
     {
         tcb[currTid].justCreated = 0;
-        //printf("justCreated is zero for tid %d\n", (int) currTid);
     }
 
     //longjmp is used to restore the next thread and resume execution of that thread
@@ -115,8 +105,6 @@ void scheduleHandler()
         tcb[globalTid].status = THREAD_RUNNING;
         longjmp(tcb[globalTid].envBuffer, 1);
     }
-    
-    //printf("Exiting scheduler...\n");
 }
 
 //Function to initialize the thread subsytem after the first call to pthread_create
@@ -161,7 +149,6 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         tcb[0].status = THREAD_READY;
         tcb[0].justCreated = 1;
         isMainThread = setjmp(tcb[0].envBuffer);
-        //printf("isMainThread: %d\n", isMainThread);
     }
 
     /*...Create thread context...*/
@@ -180,7 +167,6 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 
         //Initialize the threads state with start_routine
         //use setjmp to save the state of the current thread in jmp_buf
-        //printf("pthread_create setjmp with tid: %d\n", (int)currTid);
         setjmp(tcb[currTid].envBuffer);
 
         //Change the program counter(RIP) to point to the start_thunk function
@@ -200,8 +186,9 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         stackPointer += (32767);
         //Place address of pthread_exit() at the top of the stack and move RSP
         stackPointer -= sizeof(&pthread_exit);
+        void (*tempAddress)(void*) = &pthread_exit;
         int addressSize = sizeof(&pthread_exit);
-        stackPointer = memcpy(stackPointer, pthread_exit, addressSize);
+        stackPointer = memcpy(stackPointer, &tempAddress, addressSize);
         tcb[currTid].envBuffer[0].__jmpbuf[JB_RSP] = ptr_mangle((unsigned long int)stackPointer);
 
         //Set status to THREAD_RUNNING
@@ -209,13 +196,6 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         
         //Set just created to 1 for scheduleHandler
         tcb[currTid].justCreated = 1;
-
-        /*printf("JB_PCd: %ld\n", ptr_demangle(tcb[currTid].envBuffer[0].__jmpbuf[JB_PC]));
-        printf("JB_PC: %ld\n", tcb[currTid].envBuffer[0].__jmpbuf[JB_PC]);
-        printf("JB_RSPd: %ld\n", ptr_demangle(tcb[currTid].envBuffer[0].__jmpbuf[JB_RSP]));
-        printf("JB_RSP: %ld\n", tcb[currTid].envBuffer[0].__jmpbuf[JB_RSP]);
-        printf("JB_R13: %ld\n", tcb[currTid].envBuffer[0].__jmpbuf[JB_R13]);
-        printf("JB_R12: %ld\n", tcb[currTid].envBuffer[0].__jmpbuf[JB_R12]);*/
 
         scheduleHandler();
     }
@@ -230,19 +210,7 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 //Terminate the calling thread
 extern void pthread_exit(void *value_ptr)
 {
-    //The first thread was returning with globalTid of 0, this fixes that error
-    /*static int firstThreadError = 1;
-    if (firstThreadError && globalTid == 0)
-    {
-        globalTid = 1;
-        firstThreadError = 0;
-    }*/
-    
-    printf("pthread_exit for tid %d with status of %d \n", (int) globalTid, (int)tcb[globalTid].status);
-
     tcb[globalTid].status = THREAD_DEAD;
-
-    //printf("pthread_exit for tid %d with status of %d \n", (int) globalTid, (int)tcb[globalTid].status);
 
     //Check to see if there are any threads still waiting to finish
     int stillThreads = 0;
@@ -260,7 +228,6 @@ extern void pthread_exit(void *value_ptr)
                 break;
         }
     }
-    //printf("stillThreads: %d\n", stillThreads);
 
     //If threads still exist then schedule the next one
     if (stillThreads)
