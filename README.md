@@ -12,12 +12,13 @@ hardware that was being used for this implementation.
 
 ### Thread Control Block
 This struct contins the information which is held for a given thread, i.e. its status, set of 
-registers, exit status, and a bool which indicates if it was just created.  The status is stored
-in the form of an enumeration, which contains one of four status's: `THREAD_RUNNING`, 
-`THREAD_READY`, `THREAD_BLOCKED`, and `THREAD_DEAD`.  This status is changed by the library for 
-a given thread as it is scheduled and its start routine is executed.  Additionally, the `jmp_buf`
-envBuffer variable is used to store the registers neccessary for the function run by the thread 
-to be stopped and resumed as the scheduler sees fit.
+registers, exit status, a pointer to the stack and a bool which indicates if it was just
+created.  The status is stored in the form of an enumeration, which contains one of four
+status's: `THREAD_RUNNING`,  `THREAD_READY`, `THREAD_BLOCKED`, and `THREAD_DEAD`.  This status 
+is changed by the library for a given thread as it is scheduled and its start routine is
+executed.  Additionally, the `jmp_buf`envBuffer variable is used to store the registers
+neccessary for the function run by the thread to be stopped and resumed as the scheduler sees
+fit. 
 
 ## `void scheduleHandler()`
 This handler function happens on one of three conditions, it is called explicitly from 
@@ -30,7 +31,7 @@ has been in the scheduler and if the thread is not dead.  It is saved using the 
 with the argument of the envBuffer from the thread control block struct.  Then the function will
 use change the global thread id value to the new function, set its status to `THREAD_RUNNING` and
 use the longjmp function to resume the functions execution.
-:
+
 ## `int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine)(void*), void*arg)`
 This is the first of three library functions called in main.  This creates the thread and 
 prepares it in order to execute the function passed as one of the arguments.
@@ -57,7 +58,8 @@ thread setup, to the end of the `pthread_create` function where it will return t
 
 ### new thread context
 First the the program searches for the next open thread id and stores it in the thread
-argument of the `pthread_create` function.  Then it uses the setjmp function to store the 
+argument of the `pthread_create` function.  If there are already 127 running threads and main, then 
+the program will print an error message and exit.  Then it uses the setjmp function to store the 
 state of the current thread, thereby allowing us to alter that state.  We do so by indexing
 into the `jmp_buf` structure and changing the registers.  Ideally we would change the program
 counter to point to start routine and pass it the argument of arg by changing rdi directly.
@@ -66,16 +68,17 @@ instead use the `start_thunk` function to create a fake context for us.  Therefo
 program counter of the envBuffer to point to `start_thunk` and change R13 to hold arg and R12
 to hold start routine.  Note that we additionally need to mangle the pointer before changing the
 program counter, due to a security feature present in the libc wrapper.  Finally we create a 
-32,767 byte stack for our thread using the malloc function.  Then we change the stackPointer 
+32,767 byte stack for our thread using the malloc function.  Then we change the get a pointer 
 such that it points to the top of the stack.  Then we push the address of `pthread_exit()`
 to the top of that stack, so that when `start_routine` returns, `pthread_exit` is implicitly
-called.  Now the status of the thread is set to `THREAD_READY`, the justCreated bool is set to true
-and the scheduleHandler() is explictly called.
+called.  Now the status of the thread is set to `THREAD_READY`, the justCreated bool is set to 
+true and the scheduleHandler() is explictly called.
 
 ## `void pthread_exit(void* value_ptr)`
 This function when called, will terminate the calling thread.  First it sets the threads status
-to `THREAD_DEAD`.  Then it runs a loop through all of the threads, to check if there are any
-threads remaining to be executed.  If there are still threads then the schedule handler is invoked.  Otherwise the exit function is called to explicitly terminate the program.
+to `THREAD_DEAD` and frees the stack for the thread.  Then it runs a loop through all of the threads,
+to check if there are any threads remaining to be executed.  If there are still threads then the
+schedule handler is invoked.  Otherwise the exit function is called to explicitly terminate the program.
 
 ## `pthread_t pthread_self()`
 This returns the thread id of the calling thread based on the global thread id of the library at the time of its calling.

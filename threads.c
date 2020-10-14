@@ -12,8 +12,9 @@
 #include "ec440threads.h"
 #include "threads.h"
 
-#define MAX_THREADS 128     //Max number of threads which can exist
-#define RR_INTERVAL 50000   //Number of seconds to wait between SIGALRM signals (50ms)
+#define MAX_THREADS 128     /*Max number of threads which can exist*/
+#define RR_INTERVAL 50000   /*Number of seconds to wait between SIGALRM signals (50ms)*/
+#define STACK_SIZE  32767   /*Number of bytes in a threads stack*/
 
 //jmp_buf index definitions
 #define JB_RBX 0
@@ -41,6 +42,7 @@ struct threadControlBlock
     jmp_buf envBuffer;                  /*threads state(Set of registers)*/
     int exitStatus;                     /*Exit status of the thread*/
     int justCreated;                    /*bool used to determine if the thread was just created*/
+    void* stack;                        /*Pointer used to free the stack for a thread in pthread_exit*/
 };
 
 //Define select global variables
@@ -161,6 +163,13 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         {
             currTid++;
         }
+
+        //Check for an attempt to call more than 128 threads at once
+        if (currTid == MAX_THREADS)
+        {
+            fprintf(stderr, "ERROR: Cannot call pthread_create, maximum number of threads reached\n");
+            exit(EXIT_FAILURE);
+        }
         
         //Store the thread id in the *thread pointer so that it is known to main
         *thread = currTid;
@@ -177,15 +186,14 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         //Change R12(index 2 of jmp_buf) to contain address of start_routine function
         tcb[currTid].envBuffer[0].__jmpbuf[JB_R12] = (unsigned long int) start_routine;
         
-        //Allocate a new stack of 32,767 byte size and move pointer to the top of the stack
-        void *stackPointer = malloc(32767);
-        stackPointer += (32767);
+        //Allocate a new stack of 32,767 byte size and place a pointer at the top of the stack
+        tcb[currTid].stack = malloc(STACK_SIZE);
+        void* stackBottom = tcb[currTid].stack + STACK_SIZE;
 
         //Place address of pthread_exit() at the top of the stack and move RSP
-        stackPointer -= sizeof(&pthread_exit);
+        void* stackPointer = stackBottom - sizeof(&pthread_exit);
         void (*tempAddress)(void*) = &pthread_exit;
-        int addressSize = sizeof(&pthread_exit);
-        stackPointer = memcpy(stackPointer, &tempAddress, addressSize);
+        stackPointer = memcpy(stackPointer, &tempAddress, sizeof(tempAddress));
 
         //set RSP(stack pointer) to the top of our newly allocated stack
         tcb[currTid].envBuffer[0].__jmpbuf[JB_RSP] = ptr_mangle((unsigned long int)stackPointer);
@@ -213,6 +221,9 @@ extern void pthread_exit(void *value_ptr)
 {
     //Set threads status to dead
     tcb[globalTid].status = THREAD_DEAD;
+
+    //Free the stack for the thread
+    free(tcb[globalTid].stack);
 
     //Check to see if there are any threads still waiting to finish
     int stillThreads = 0;
