@@ -8,6 +8,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <string.h>
+#include <semaphore.h>
 
 #include "ec440threads.h"
 #include "threads.h"
@@ -258,4 +259,54 @@ extern void pthread_exit(void *value_ptr)
 extern pthread_t pthread_self()
 {
     return globalTid;
+}
+
+//Stops the calling thread from being interuppted by another thread
+extern void lock()
+{
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+    sigprocmask(SIG_BLOCK, &set, NULL);
+}
+
+//Called after lock, allows the thread to be interuppted from then on
+extern void unlock()
+{
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+    sigprocmask(SIG_UNBLOCK, &set, NULL);
+}
+
+//Postpones the execution of the calling thread until the target thread terminates
+extern int pthread_join(pthread_t thread, void** value_ptr)
+{
+    return 0;
+}
+
+//Semaphore library
+
+//Intializes the semaphore referenced by sem
+int sem_init(sem_t *sem, int pshared, unsigned value)
+{
+    return 0;
+}
+
+//decrements the semphore referenced by sem
+int sem_wait(sem_t *sem)
+{
+    return 0;
+}
+
+//increments the semphore referenced by sem
+int sem_post(sem_t *sem)
+{
+    return 0;
+}
+
+//destroys the semphore referenced by sem
+int sem_destroy(sem_t *sem)
+{
+    return 0;
 }
