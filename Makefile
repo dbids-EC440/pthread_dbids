@@ -1,4 +1,4 @@
-GCC = gcc -g -Werror -Wall -std=gnu11
+GCC = gcc -g -Werror -Wall 
 
 all: threads
 

@@ -115,7 +115,8 @@ void scheduleHandler()
 void initializeThreads()
 {
     //Initialize all of the threads to be dead
-    for (int i = 0; i < MAX_THREADS; i++)
+    int i;
+    for (i = 0; i < MAX_THREADS; i++)
     {
         tcb[i].status = THREAD_DEAD; 
     }
@@ -227,7 +228,8 @@ extern void pthread_exit(void *value_ptr)
 
     //Check to see if there are any threads still waiting to finish
     int stillThreads = 0;
-    for (int i = 0; i < MAX_THREADS; i++)
+    int i;
+    for (i = 0; i < MAX_THREADS; i++)
     {
         //If a thread is exists, set stillThreads to 1
         switch(tcb[i].status)
