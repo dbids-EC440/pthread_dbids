@@ -333,8 +333,9 @@ extern int pthread_join(pthread_t thread, void** value_ptr)
             }
             
         case THREAD_DEAD:
-            //Get the exit status of the target
-            *value_ptr = tcb[thread].exitStatus;
+            //Get the exit status of the target if value_ptr isn't NULL
+            if (value_ptr)
+                *value_ptr = tcb[thread].exitStatus;
 
             //Clean up the targets context
             tcb[thread].status = THREAD_EMPTY;
