@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <semaphore.h>
+#include <errno.h>
 
 #include "ec440threads.h"
 #include "threads.h"
@@ -33,7 +34,8 @@ enum threadStatus
     THREAD_RUNNING,         /*Running thread*/
     THREAD_READY,           /*Not running but ready to run*/
     THREAD_BLOCKED,         /*Waiting for i/o*/
-    THREAD_DEAD,            /*Thread either not initialized or finished*/    
+    THREAD_DEAD,            /*Thread finished, with context not cleaned up*/    
+    THREAD_EMPTY            /*Thread context clean*/
 };
 
 //TCB which holds information for a given thread
@@ -41,10 +43,19 @@ struct threadControlBlock
 {
     enum threadStatus status;           /*Thread status*/
     jmp_buf envBuffer;                  /*threads state(Set of registers)*/
-    int exitStatus;                     /*Exit status of the thread*/
+    void* exitStatus;                     /*Exit status of the thread*/
     int justCreated;                    /*bool used to determine if the thread was just created*/
     void* stack;                        /*Pointer used to free the stack for a thread in pthread_exit*/
+    pthread_t waitingTid;               /*Used to store the tid of a thread waiting for this one to finish*/
 };
+
+//Used to save the return value of a threads start_routine function
+void pthread_exit_wrapper()
+{
+    unsigned long int res;
+    asm("movq %%rax, %0\n":"=r"(res));
+    pthread_exit((void *) res);
+}
 
 //Define select global variables
 struct threadControlBlock tcb[MAX_THREADS];         /*Holds information for all of the threads*/
@@ -58,11 +69,12 @@ void scheduleHandler()
     switch(tcb[globalTid].status)
     {
         case THREAD_RUNNING:
-        case THREAD_BLOCKED:
             tcb[globalTid].status = THREAD_READY;
             break;
+        case THREAD_BLOCKED:
         case THREAD_READY:
         case THREAD_DEAD:
+        case THREAD_EMPTY:
             break;
     }
 
@@ -115,11 +127,12 @@ void scheduleHandler()
 //Function to initialize the thread subsytem after the first call to pthread_create
 void initializeThreads()
 {
-    //Initialize all of the threads to be dead
+    //Initialize all of the threads to be empty
     int i;
     for (i = 0; i < MAX_THREADS; i++)
     {
-        tcb[i].status = THREAD_DEAD; 
+        tcb[i].status = THREAD_EMPTY; 
+        tcb[i].waitingTid = i;
     }
 
     //Setup the ualarm function to trigger SIGALRM signal every 50ms
@@ -161,7 +174,7 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         //Find the first open thread ID and store that in currTid
         //Note that I chose the thread id's to be 1-127, with 0 as the main thread
         pthread_t currTid = 1;
-        while(tcb[currTid].status != THREAD_DEAD && currTid < MAX_THREADS)
+        while(tcb[currTid].status != THREAD_EMPTY && currTid < MAX_THREADS)
         {
             currTid++;
         }
@@ -193,8 +206,8 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         void* stackBottom = tcb[currTid].stack + STACK_SIZE;
 
         //Place address of pthread_exit() at the top of the stack and move RSP
-        void* stackPointer = stackBottom - sizeof(&pthread_exit);
-        void (*tempAddress)(void*) = &pthread_exit;
+        void* stackPointer = stackBottom - sizeof(&pthread_exit_wrapper);
+        void (*tempAddress)(void*) = &pthread_exit_wrapper;
         stackPointer = memcpy(stackPointer, &tempAddress, sizeof(tempAddress));
 
         //set RSP(stack pointer) to the top of our newly allocated stack
@@ -205,6 +218,9 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         
         //Set just created to 1 for scheduleHandler to skip setjmp
         tcb[currTid].justCreated = 1;
+
+        //Set the waitingTid to the process in case this is second use of same tid
+        tcb[currTid].waitingTid = currTid;
 
         //I chose to call scheduleHandler explictly
         scheduleHandler();
@@ -224,8 +240,15 @@ extern void pthread_exit(void *value_ptr)
     //Set threads status to dead
     tcb[globalTid].status = THREAD_DEAD;
 
-    //Free the stack for the thread
-    free(tcb[globalTid].stack);
+    //Set the threads exit status to value_ptr
+    tcb[globalTid].exitStatus = value_ptr;
+
+    //Deal with waiting process if there is one waiting
+    pthread_t wTid = tcb[globalTid].waitingTid;
+    if (wTid != globalTid)
+    {
+        tcb[wTid].status = THREAD_READY;
+    }
 
     //Check to see if there are any threads still waiting to finish
     int stillThreads = 0;
@@ -241,6 +264,7 @@ extern void pthread_exit(void *value_ptr)
                 stillThreads = 1;
                 break;
             case THREAD_DEAD:
+            case THREAD_EMPTY:
                 break;
         }
     }
@@ -251,7 +275,15 @@ extern void pthread_exit(void *value_ptr)
         scheduleHandler();
     }
 
-    //else exit
+    //Else exit the program
+    //Cleanup dead threads contexts
+    for (i = 0; i < MAX_THREADS; i++)
+    {
+        if (tcb[i].status == THREAD_DEAD)
+        {
+            free(tcb[i].stack);
+        }
+    }
     exit(0);
 }
 
@@ -282,6 +314,38 @@ extern void unlock()
 //Postpones the execution of the calling thread until the target thread terminates
 extern int pthread_join(pthread_t thread, void** value_ptr)
 {
+  
+    switch(tcb[thread].status)
+    {
+        case THREAD_READY   :
+        case THREAD_RUNNING :
+        case THREAD_BLOCKED :
+            //Loop should only last for the first time the thread is called
+            while(1)
+            {
+                //block until the target terminates
+                tcb[globalTid].status = THREAD_BLOCKED;
+                tcb[thread].waitingTid = globalTid;
+
+                //At some point once the thread is finished, it will be sent back here
+                //and the while looop should be exited.
+                if (tcb[thread].status == THREAD_DEAD) break;
+            }
+            
+        case THREAD_DEAD:
+            //Get the exit status of the target
+            *value_ptr = tcb[thread].exitStatus;
+
+            //Clean up the targets context
+            tcb[thread].status = THREAD_EMPTY;
+            free(tcb[thread].stack);
+            break;
+
+        case THREAD_EMPTY:
+            printf("ERROR: Undefined behavoir\n");
+            return 3; //ESRCH 3 No such process
+            break;
+    }
     return 0;
 }
 
