@@ -320,17 +320,13 @@ extern int pthread_join(pthread_t thread, void** value_ptr)
         case THREAD_READY   :
         case THREAD_RUNNING :
         case THREAD_BLOCKED :
-            //Loop should only last for the first time the thread is called
-            while(1)
-            {
-                //block until the target terminates
-                tcb[globalTid].status = THREAD_BLOCKED;
-                tcb[thread].waitingTid = globalTid;
+            //Set the status to Blocked and add it to the waiting queue of the target                
+            tcb[globalTid].status = THREAD_BLOCKED;
+            tcb[thread].waitingTid = globalTid;
 
-                //At some point once the thread is finished, it will be sent back here
-                //and the while looop should be exited.
-                if (tcb[thread].status == THREAD_DEAD) break;
-            }
+            //Block until the target terminates
+	        scheduleHandler();
+            //At some point once the thread is finished, it will be sent back here
             
         case THREAD_DEAD:
             //Get the exit status of the target if value_ptr isn't NULL
