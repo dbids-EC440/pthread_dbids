@@ -13,6 +13,7 @@
 
 #include "ec440threads.h"
 #include "threads.h"
+#include "queueHeader.h"
 
 #define MAX_THREADS 128     /*Max number of threads which can exist*/
 #define RR_INTERVAL 50000   /*Number of seconds to wait between SIGALRM signals (50ms)*/
@@ -43,10 +44,19 @@ struct threadControlBlock
 {
     enum threadStatus status;           /*Thread status*/
     jmp_buf envBuffer;                  /*threads state(Set of registers)*/
-    void* exitStatus;                     /*Exit status of the thread*/
+    void* exitStatus;                   /*Exit status of the thread*/
     int justCreated;                    /*bool used to determine if the thread was just created*/
     void* stack;                        /*Pointer used to free the stack for a thread in pthread_exit*/
     pthread_t waitingTid;               /*Used to store the tid of a thread waiting for this one to finish*/
+    int woke;                           /*bool use to determine if thread was just woken*/
+};
+
+//Struct which holds additional information needed for the semaphore implementation
+struct semaphoreControlBlock
+{
+    int value;                          /*Number of wakeup calls to semaphore*/
+    struct Queue* blockedThreads;       /*Pointer to queue of waiting threads, queue implemented in queueHeader*/
+    int isInitialized;                  /*Flag indicating whether the semaphore is initialized*/
 };
 
 //Used to save the return value of a threads start_routine function
@@ -58,18 +68,18 @@ void pthread_exit_wrapper()
 }
 
 //Define select global variables
-struct threadControlBlock tcb[MAX_THREADS];         /*Holds information for all of the threads*/
-pthread_t globalTid = 0;                            /*Stores currently running threads tid*/
-struct sigaction act;                               /*Used to setup SIGALRM */
+struct threadControlBlock tcbArray[MAX_THREADS];        /*Holds information for all of the threads*/
+pthread_t globalTid = 0;                                /*Stores currently running threads tid*/
+struct sigaction act;                                   /*Used to setup SIGALRM */
 
 //Handler function to schedule processes in a round robin fashion
 void scheduleHandler()
 {        
     //Set currently running thread to READY
-    switch(tcb[globalTid].status)
+    switch(tcbArray[globalTid].status)
     {
         case THREAD_RUNNING:
-            tcb[globalTid].status = THREAD_READY;
+            tcbArray[globalTid].status = THREAD_READY;
             break;
         case THREAD_BLOCKED:
         case THREAD_READY:
@@ -94,7 +104,7 @@ void scheduleHandler()
         }
         
         //If a thread is ready, exit the loop
-        if(tcb[currTid].status == THREAD_READY)
+        if(tcbArray[currTid].status == THREAD_READY)
         {
             foundThread = 1;
         }
@@ -104,23 +114,23 @@ void scheduleHandler()
                             0 = normal return, nonzero = longjmp return */
     
     //If the thread was not justCreated and is alive, then save the state
-    if (tcb[globalTid].justCreated == 0  && tcb[globalTid].status != THREAD_DEAD)
+    if (tcbArray[globalTid].justCreated == 0  && tcbArray[globalTid].status != THREAD_DEAD)
     {
-        jumpLoop = setjmp(tcb[globalTid].envBuffer);
+        jumpLoop = setjmp(tcbArray[globalTid].envBuffer);
     }
     
     //Needed to remove setjmp from happening the first time
-    if (tcb[currTid].justCreated)
+    if (tcbArray[currTid].justCreated)
     {
-        tcb[currTid].justCreated = 0;
+        tcbArray[currTid].justCreated = 0;
     }
 
     //longjmp is used to restore the next thread and resume execution of that thread
     if (!jumpLoop)
     {
         globalTid = currTid;
-        tcb[globalTid].status = THREAD_RUNNING;
-        longjmp(tcb[globalTid].envBuffer, 1);
+        tcbArray[globalTid].status = THREAD_RUNNING;
+        longjmp(tcbArray[globalTid].envBuffer, 1);
     }
 }
 
@@ -131,8 +141,10 @@ void initializeThreads()
     int i;
     for (i = 0; i < MAX_THREADS; i++)
     {
-        tcb[i].status = THREAD_EMPTY; 
-        tcb[i].waitingTid = i;
+        tcbArray[i].status = THREAD_EMPTY; 
+        tcbArray[i].waitingTid = i;
+        tcbArray[i].justCreated = 0;
+        tcbArray[i].woke = 0;
     }
 
     //Setup the ualarm function to trigger SIGALRM signal every 50ms
@@ -163,9 +175,9 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         firstTime = 0;
 
         //Saves the main threads context and checks to see if it's the main thread
-        tcb[0].status = THREAD_READY;
-        tcb[0].justCreated = 1;
-        isMainThread = setjmp(tcb[0].envBuffer);
+        tcbArray[0].status = THREAD_READY;
+        tcbArray[0].justCreated = 1;
+        isMainThread = setjmp(tcbArray[0].envBuffer);
     }
 
     /*...Create new thread context...*/
@@ -174,7 +186,7 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         //Find the first open thread ID and store that in currTid
         //Note that I chose the thread id's to be 1-127, with 0 as the main thread
         pthread_t currTid = 1;
-        while(tcb[currTid].status != THREAD_EMPTY && currTid < MAX_THREADS)
+        while(tcbArray[currTid].status != THREAD_EMPTY && currTid < MAX_THREADS)
         {
             currTid++;
         }
@@ -190,20 +202,20 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         *thread = currTid;
 
         //use setjmp to save the state of the current thread in jmp_buf
-        setjmp(tcb[currTid].envBuffer);
+        setjmp(tcbArray[currTid].envBuffer);
 
         //Change the program counter(RIP) to point to the start_thunk function
-        tcb[currTid].envBuffer[0].__jmpbuf[JB_PC] = ptr_mangle((unsigned long int)start_thunk); 
+        tcbArray[currTid].envBuffer[0].__jmpbuf[JB_PC] = ptr_mangle((unsigned long int)start_thunk); 
         
         //Change R13(index 3 of jmp_buf) to contain value of void* arg
-        tcb[currTid].envBuffer[0].__jmpbuf[JB_R13] = (long) arg;
+        tcbArray[currTid].envBuffer[0].__jmpbuf[JB_R13] = (long) arg;
         
         //Change R12(index 2 of jmp_buf) to contain address of start_routine function
-        tcb[currTid].envBuffer[0].__jmpbuf[JB_R12] = (unsigned long int) start_routine;
+        tcbArray[currTid].envBuffer[0].__jmpbuf[JB_R12] = (unsigned long int) start_routine;
         
         //Allocate a new stack of 32,767 byte size and place a pointer at the top of the stack
-        tcb[currTid].stack = malloc(STACK_SIZE);
-        void* stackBottom = tcb[currTid].stack + STACK_SIZE;
+        tcbArray[currTid].stack = malloc(STACK_SIZE);
+        void* stackBottom = tcbArray[currTid].stack + STACK_SIZE;
 
         //Place address of pthread_exit() at the top of the stack and move RSP
         void* stackPointer = stackBottom - sizeof(&pthread_exit_wrapper);
@@ -211,16 +223,16 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         stackPointer = memcpy(stackPointer, &tempAddress, sizeof(tempAddress));
 
         //set RSP(stack pointer) to the top of our newly allocated stack
-        tcb[currTid].envBuffer[0].__jmpbuf[JB_RSP] = ptr_mangle((unsigned long int)stackPointer);
+        tcbArray[currTid].envBuffer[0].__jmpbuf[JB_RSP] = ptr_mangle((unsigned long int)stackPointer);
 
         //Set status to THREAD_READY
-        tcb[currTid].status = THREAD_READY;
+        tcbArray[currTid].status = THREAD_READY;
         
         //Set just created to 1 for scheduleHandler to skip setjmp
-        tcb[currTid].justCreated = 1;
+        tcbArray[currTid].justCreated = 1;
 
         //Set the waitingTid to the process in case this is second use of same tid
-        tcb[currTid].waitingTid = currTid;
+        tcbArray[currTid].waitingTid = currTid;
 
         //I chose to call scheduleHandler explictly
         scheduleHandler();
@@ -238,16 +250,16 @@ extern int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 extern void pthread_exit(void *value_ptr)
 {
     //Set threads status to dead
-    tcb[globalTid].status = THREAD_DEAD;
+    tcbArray[globalTid].status = THREAD_DEAD;
 
     //Set the threads exit status to value_ptr
-    tcb[globalTid].exitStatus = value_ptr;
+    tcbArray[globalTid].exitStatus = value_ptr;
 
     //Deal with waiting process if there is one waiting
-    pthread_t wTid = tcb[globalTid].waitingTid;
+    pthread_t wTid = tcbArray[globalTid].waitingTid;
     if (wTid != globalTid)
     {
-        tcb[wTid].status = THREAD_READY;
+        tcbArray[wTid].status = THREAD_READY;
     }
 
     //Check to see if there are any threads still waiting to finish
@@ -256,7 +268,7 @@ extern void pthread_exit(void *value_ptr)
     for (i = 0; i < MAX_THREADS; i++)
     {
         //If a thread is exists, set stillThreads to 1
-        switch(tcb[i].status)
+        switch(tcbArray[i].status)
         {
             case THREAD_READY   :
             case THREAD_RUNNING :
@@ -279,9 +291,9 @@ extern void pthread_exit(void *value_ptr)
     //Cleanup dead threads contexts
     for (i = 0; i < MAX_THREADS; i++)
     {
-        if (tcb[i].status == THREAD_DEAD)
+        if (tcbArray[i].status == THREAD_DEAD)
         {
-            free(tcb[i].stack);
+            free(tcbArray[i].stack);
         }
     }
     exit(0);
@@ -315,14 +327,14 @@ extern void unlock()
 extern int pthread_join(pthread_t thread, void** value_ptr)
 {
   
-    switch(tcb[thread].status)
+    switch(tcbArray[thread].status)
     {
         case THREAD_READY   :
         case THREAD_RUNNING :
         case THREAD_BLOCKED :
             //Set the status to Blocked and add it to the waiting queue of the target                
-            tcb[globalTid].status = THREAD_BLOCKED;
-            tcb[thread].waitingTid = globalTid;
+            tcbArray[globalTid].status = THREAD_BLOCKED;
+            tcbArray[thread].waitingTid = globalTid;
 
             //Block until the target terminates
 	        scheduleHandler();
@@ -331,11 +343,11 @@ extern int pthread_join(pthread_t thread, void** value_ptr)
         case THREAD_DEAD:
             //Get the exit status of the target if value_ptr isn't NULL
             if (value_ptr)
-                *value_ptr = tcb[thread].exitStatus;
+                *value_ptr = tcbArray[thread].exitStatus;
 
             //Clean up the targets context
-            tcb[thread].status = THREAD_EMPTY;
-            free(tcb[thread].stack);
+            tcbArray[thread].status = THREAD_EMPTY;
+            free(tcbArray[thread].stack);
             break;
 
         case THREAD_EMPTY:
@@ -346,28 +358,90 @@ extern int pthread_join(pthread_t thread, void** value_ptr)
     return 0;
 }
 
-//Semaphore library
+/*..................Semaphore library..................*/
 
 //Intializes the semaphore referenced by sem
 int sem_init(sem_t *sem, int pshared, unsigned value)
 {
+    //Initialize semaphore control block to store addtional information needed by the semaphore
+    struct semaphoreControlBlock* scbPtr = (struct semaphoreControlBlock*) malloc(sizeof(struct semaphoreControlBlock));
+    scbPtr->value = value;
+    scbPtr->blockedThreads = createQueue();
+    scbPtr->isInitialized = 1;
+
+    //Save that semaphore within the sem_t struct
+    sem->__align = (long) scbPtr;
+    
     return 0;
 }
 
-//decrements the semphore referenced by sem
+//Decrements the semphore referenced by sem
 int sem_wait(sem_t *sem)
 {
-    return 0;
+    struct semaphoreControlBlock* scbPtr = (struct semaphoreControlBlock*)(sem->__align);
+
+    //If the value is less or equal to than zero, block
+    if (scbPtr->value <= 0)
+    {
+        tcbArray[globalTid].status = THREAD_BLOCKED;
+        enQueue(scbPtr->blockedThreads, globalTid);
+        scheduleHandler();
+    }
+    //This either happens immediately
+    else
+    {
+        (scbPtr->value)--;
+        return 0;
+    }
+
+    //This will happen if the semaphore is woken
+    if (tcbArray[globalTid].woke)
+    {
+        tcbArray[globalTid].woke = 0;
+        return 0;
+    }
+
+    //Return statement just in case error occurs
+    return -1;
 }
 
 //increments the semphore referenced by sem
 int sem_post(sem_t *sem)
 {
-    return 0;
+    struct semaphoreControlBlock* scbPtr = (struct semaphoreControlBlock*)(sem->__align);
+
+    if (scbPtr->value == 0)
+    {
+        pthread_t waitingTid = deQueue(scbPtr->blockedThreads);
+        if (waitingTid != -1)
+        {
+            //wakeup waiting thread
+            tcbArray[globalTid].woke = 1;
+            tcbArray[globalTid].status = THREAD_READY;
+        }
+        else
+        {
+            //If no thread was waiting, just increment the semaphore
+            (scbPtr->value)++;
+        }
+    }
+    
+    return -1;
 }
 
 //destroys the semphore referenced by sem
 int sem_destroy(sem_t *sem)
 {
+    struct semaphoreControlBlock* scbPtr = (struct semaphoreControlBlock*)(sem->__align);
+
+    if (scbPtr->isInitialized == 1)
+    {
+        free((void *)(sem->__align));   //Free's the semaphore control block for this semaphore
+    }
+    else
+    {
+        return -1; //Error
+    }
+    
     return 0;
 }
