@@ -365,6 +365,7 @@ int sem_init(sem_t *sem, int pshared, unsigned value)
 {
     //Initialize semaphore control block to store addtional information needed by the semaphore
     struct semaphoreControlBlock* scbPtr = (struct semaphoreControlBlock*) malloc(sizeof(struct semaphoreControlBlock));
+
     scbPtr->value = value;
     scbPtr->blockedThreads = createQueue();
     scbPtr->isInitialized = 1;
@@ -410,20 +411,22 @@ int sem_post(sem_t *sem)
 {
     struct semaphoreControlBlock* scbPtr = (struct semaphoreControlBlock*)(sem->__align);
 
-    if (scbPtr->value == 0)
+    if (scbPtr->value >= 0)
     {
         pthread_t waitingTid = deQueue(scbPtr->blockedThreads);
         if (waitingTid != -1)
         {
             //wakeup waiting thread
-            tcbArray[globalTid].woke = 1;
-            tcbArray[globalTid].status = THREAD_READY;
+            tcbArray[waitingTid].woke = 1;
+            tcbArray[waitingTid].status = THREAD_READY;
         }
         else
         {
             //If no thread was waiting, just increment the semaphore
             (scbPtr->value)++;
         }
+
+        return 0;
     }
     
     return -1;
