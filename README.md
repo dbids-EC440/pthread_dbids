@@ -1,3 +1,46 @@
+# Project 3 README by Devin Bidstrup
+### Written for Boston University EC440: Introduction to Operating Systems
+In this section of the project, the pthread_join function, a system to lock and unlock threads, as well as POSIX semaphore functionality (sem_init, sem_wait, sem_post, sem_destroy) were implemented adding to the threading library previously developed.
+Appended to the end of this README, is that of the previous project, which might be needed to understand the implementation I describe.
+
+## `extern void lock()`
+This function simply uses the sigproc mask function to add to the SIG_BLOCK mask for the thread the SIGALRM signal.  This in effect allows the thread to not be scheduled out and continue running until the `extern void unlock` function is used.
+
+## `extern void unlock()`
+This function simply uses the sigproc mask function to remove from the SIG_BLOCK mask for the thread the SIGALRM signal.  This in effect allows the thread to resume being scheduled after the `extern void lock` function disabled that functionality.
+
+## `extern int pthread_join(pthread_t thread, void** value_ptr)`
+This function suspends the execution of the calling thread until the target thread terminates, unless it has already terminated.  In reality the functionality of the thread is dependent on changes to the pthread_exit and pthread_create functions in order to work, to make this more concise these changes shall be detailed here.  
+In pthread_create, the address of pthread_exit is no longer pushed directly onto the threads stack.  Instead, the pthread_exit_wrapper function is pushed onto the threads stack.  By the power of inline x86 assembly, this function loads the return value of the thread into the value_ptr argument of pthread_exit.  
+Within the pthread_exit function, the threads status is now set to THREAD_DEAD instead of THREAD_EMPTY.  This new status indicates that a thread has finished executing, but its context has been preserved in case of a future call to pthread_join with that thread as the target.  The value_ptr argument is then placed in the exist status member of the tcb for that thread.  pthread_exit no longer cleans up the threads context as long as there are remaining threads (only if all threads are finished does it free their respective stacks).
+The pthread_join function itself first determines the status of the target thread with a switch statement.  If it is READY, RUNNING, or BLOCKED then the thread blocks until the thread has the THREAD_DEAD status.  This is achieved by setting its status to THREAD_BLOCKED and the waitingTid value of the target threads tcb to the current thread.  Then the scheduleHandler function is called to schedule out the thread.  The THREAD_DEAD case of the thread is reached two ways.  Either the thread was dead from the start, and the switch statement causes the program to jump there, or originally the thread was blocked waiting for the target to finish execution, and has just returned from the scheduleHandler call that it made previously.  Either way the exit status of the target thread is stored in the value_ptr void**.  Then the target threads context is cleaned up, meaning that its status is set to THREAD_EMPTY and its stack is freed.  If the function is successful it should return 0.
+
+### semaphoreControlBlock
+This struct contains additional information needed in order to implement the POSIX semaphore functionality.  The first member stores the value of the semaphore as an integer.  The second stores a pointer to a Queue struct which lists the threads blocked on the semaphore at a given point in time.  This queue is implemented in the queueHeader.h file.  The majority of the code for that queue was found on the GfG website, and is by no means my own work.  Only the slight modification of changing the data stored from int to pthread_t was neccessary to get it working for my implementation.  The third member is a flag which is true if the semaphore has been initialized, but is otherwise false.  This was neccessary to prevent the sem_destroy function removing a semaphore which had yet to be initialized.
+
+## `int sem_init(sem_t *sem, int pshared, unsigned value)`
+This function initializes a semaphore pointed to by sem to the value of value.  For our purposes, the pshared argument will always be zero, indicating that sem is shared between processes.  First space is allocated for a semaphoreControlBlock using the malloc function and stored in scbPtr.  Then that scb's value is changed to the value passed to sem_init, the blockedThreads queue created (but still empty), and the isInitialized flag is set to 1 (true).  Finally that scb is saved within the `__align` part of sem_t structure for sem.
+
+## `int sem_wait(sem_t *sem)`
+This function either descrements the semaphore referenced by sem, or blocks the thread until that semaphore can be decremented.  First the function gets the scb for this semaphore from the `__align` member of sem_t.  This is used to check the value of the semaphore.  If the value is <= 0 then the calling thread sets its status to THREAD_BLOCKED, and adds itself to the blocked threads queue of the scb before calling the scheduleHandler to schedule out this blocked thread.  Else if the value > 0  intially then the thread decrements the semaphore and returns 0.  There is a new member of the tcb which was added to indicate when a thread was woken up in sem_post.  So that if the thread returns from the scheduleHandler (i.e. unblocks), the thread should be caught by the following if statement which checks if woke is 1 for the threads tcb.  If so it sets the woke member to zero and returns 0.  Else, there was some error and -1 is returned.
+
+## `int sem_post(sem_t *sem)`
+This function increments the value of the semaphore if there are no threads waiting for the semaphore to post, and otherwise wakes the first thread waiting in the queue.  First the function gets the scb for this semaphore from the `__align` member of sem_t.  This is then used to check the value of the semaphore.  If the value is >= 0 then the function checks if there are threads waiting in the scb for this semaphore.  If no threads are waiting (-1 is returned) then the semaphores value is incremented in the scb.  If there are waiting threads, then the woke member of the threads tcb is set to 1, and the threads status is changed to THREAD_READY so that is will be scheduled in the future.  Then 0 is returned if the value of the semaphore is greater than zero, otherwise -1 is returned to indicate an error.
+
+## `int sem_destroy(sem_t *sem)`
+This function destroys the semaphore.  This is accomplished by first getting the scb for this semaphore from the `__align` member of sem_t.  Then use that to determine if the thread has been initialized.  If so, free the scb from memory, and return 0;  If not return -1 to indicate an error.
+
+
+
+### Undefined Functionality
+The following functionality is undefined, and should be avoided when using this implementation
+* calling pthread_join with a target thread which has not been created, or has been fully removed (status of THREAD_EMPTY)
+* attempting to initialize an already initialized semaphore
+* Destroying a semaphore that other threads are blocked on
+* using a semaphore that has been destroyed
+* multiple calls to pthread_join on the same target
+
+
 # Project 2 README by Devin Bidstrup
 ### Written for Boston University EC440: Introduction to Operating Systems
 This project is a thread libaray which implements the pthread API's create, exit, and self
