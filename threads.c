@@ -346,8 +346,8 @@ extern int pthread_join(pthread_t thread, void** value_ptr)
                 *value_ptr = tcbArray[thread].exitStatus;
 
             //Clean up the targets context
-            tcbArray[thread].status = THREAD_EMPTY;
             free(tcbArray[thread].stack);
+            tcbArray[thread].status = THREAD_EMPTY;
             break;
 
         case THREAD_EMPTY:
@@ -361,7 +361,7 @@ extern int pthread_join(pthread_t thread, void** value_ptr)
 /*..................Semaphore library..................*/
 
 //Intializes the semaphore referenced by sem
-int sem_init(sem_t *sem, int pshared, unsigned value)
+extern int sem_init(sem_t *sem, int pshared, unsigned value)
 {
     //Initialize semaphore control block to store addtional information needed by the semaphore
     struct semaphoreControlBlock* scbPtr = (struct semaphoreControlBlock*) malloc(sizeof(struct semaphoreControlBlock));
@@ -377,7 +377,7 @@ int sem_init(sem_t *sem, int pshared, unsigned value)
 }
 
 //Decrements the semphore referenced by sem
-int sem_wait(sem_t *sem)
+extern int sem_wait(sem_t *sem)
 {
     struct semaphoreControlBlock* scbPtr = (struct semaphoreControlBlock*)(sem->__align);
 
@@ -407,13 +407,15 @@ int sem_wait(sem_t *sem)
 }
 
 //increments the semphore referenced by sem
-int sem_post(sem_t *sem)
+extern int sem_post(sem_t *sem)
 {
     struct semaphoreControlBlock* scbPtr = (struct semaphoreControlBlock*)(sem->__align);
 
     if (scbPtr->value >= 0)
     {
+        //Either gets the waiting threads tid or returns -1 if the list is empty
         pthread_t waitingTid = deQueue(scbPtr->blockedThreads);
+        
         if (waitingTid != -1)
         {
             //wakeup waiting thread
@@ -433,13 +435,14 @@ int sem_post(sem_t *sem)
 }
 
 //destroys the semphore referenced by sem
-int sem_destroy(sem_t *sem)
+extern int sem_destroy(sem_t *sem)
 {
     struct semaphoreControlBlock* scbPtr = (struct semaphoreControlBlock*)(sem->__align);
 
+    //Free's the semaphore control block for this semaphore
     if (scbPtr->isInitialized == 1)
     {
-        free((void *)(sem->__align));   //Free's the semaphore control block for this semaphore
+        free((void *)(sem->__align));   
     }
     else
     {
